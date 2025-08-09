@@ -20,55 +20,57 @@ class GoogleSheetsService {
     return GoogleSheetsService._(spreadsheetId, sheets.SheetsApi(client));
   }
 
-  // ---------- Resultados de marcação ----------
+  // ---------- Resultados ----------
   MarkResult _notFound() => MarkResult(status: MarkStatus.notFound);
-  MarkResult _already({int? row, String? timestamp}) =>
-      MarkResult(status: MarkStatus.alreadyPresent, row: row, timestamp: timestamp);
-  MarkResult _marked({required int row, required String timestamp}) =>
-      MarkResult(status: MarkStatus.marked, row: row, timestamp: timestamp);
+  MarkResult _already({int? row}) =>
+      MarkResult(status: MarkStatus.alreadyPresent, row: row);
+  MarkResult _marked({required int row}) =>
+      MarkResult(status: MarkStatus.marked, row: row);
 
-  /// Procura [valor] na Coluna A da aba [sheetName].
-  /// Se achar:
-  ///  - Se B já estiver "Presente" -> NÃO sobrescreve (bloqueio) e retorna alreadyPresent.
-  ///  - Senão grava "Presente" em B e data/hora em C, formata B (central + verde).
-  Future<MarkResult> marcarPresenca(
+  /// Marca presença em UMA coluna de presença (ex.: B..E).
+  ///
+  /// [sheetName]        -> nome da aba (ex.: 'Segunda', 'Terca', 'Quarta')
+  /// [presenceColIndex] -> índice zero-based da coluna de presença (B=1, C=2, D=3, E=4)
+  Future<MarkResult> marcarPresencaEmColuna(
     String valor, {
-    required String sheetName, // 'Segunda' | 'Terca' | 'Quarta'
-    String baseRange = 'A2:C20000',
+    required String sheetName,
+    required int presenceColIndex,
+    String baseRange = 'A2:E20000',
   }) async {
     final range = '$sheetName!$baseRange';
 
-    // 1) Ler A..C para localizar a linha
+    // 1) Ler A..E para localizar a linha
     final res = await _api.spreadsheets.values.get(spreadsheetId, range);
     final values = res.values ?? [];
 
     for (int i = 0; i < values.length; i++) {
       final row = values[i];
       final colA = row.isNotEmpty ? (row[0]?.toString() ?? '') : '';
-      final colB = row.length > 1 ? (row[1]?.toString() ?? '') : '';
-      final colC = row.length > 2 ? (row[2]?.toString() ?? '') : '';
+      final currentPresence =
+          row.length > presenceColIndex ? (row[presenceColIndex]?.toString() ?? '') : '';
 
       if (colA.trim().toLowerCase() == valor.trim().toLowerCase()) {
         final rowNumber = i + 2; // começa em A2
 
-        // 2) Bloqueio de duplicata
-        if (colB.trim().toLowerCase() == 'presente') {
-          return _already(row: rowNumber, timestamp: colC);
+        // 2) Bloqueio de duplicata para a coluna selecionada
+        if (currentPresence.trim().toLowerCase() == 'presente') {
+          return _already(row: rowNumber);
         }
 
-        // 3) Escrever "Presente" em B e timestamp em C
-        final timestamp = _formatTimestamp(DateTime.now());
-        final updateRange = '$sheetName!A$rowNumber:C$rowNumber';
+        // 3) Escrever "Presente" na coluna escolhida (somente a célula necessária)
+        final presenceColA1 = _colIndexToA1(presenceColIndex); // B, C, D, E...
+        final presenceCellRange = '$sheetName!$presenceColA1$rowNumber';
+
         await _api.spreadsheets.values.update(
           sheets.ValueRange(values: [
-            [colA, 'Presente', timestamp]
+            ['Presente']
           ]),
           spreadsheetId,
-          updateRange,
+          presenceCellRange,
           valueInputOption: 'RAW',
         );
 
-        // 4) Formatar B{row}: central + verde claro
+        // 4) Formatar a célula da presença (central + verde claro + negrito)
         final sheetId = await _getSheetIdByTitle(sheetName);
         if (sheetId != null) {
           final requests = <sheets.Request>[
@@ -76,10 +78,10 @@ class GoogleSheetsService {
               repeatCell: sheets.RepeatCellRequest(
                 range: sheets.GridRange(
                   sheetId: sheetId,
-                  startRowIndex: rowNumber - 1, // zero-based
+                  startRowIndex: rowNumber - 1,
                   endRowIndex: rowNumber,
-                  startColumnIndex: 1, // B = 1
-                  endColumnIndex: 2,
+                  startColumnIndex: presenceColIndex,
+                  endColumnIndex: presenceColIndex + 1,
                 ),
                 cell: sheets.CellData(
                   userEnteredFormat: sheets.CellFormat(
@@ -103,10 +105,9 @@ class GoogleSheetsService {
           );
         }
 
-        return _marked(row: rowNumber, timestamp: timestamp);
+        return _marked(row: rowNumber);
       }
     }
-
     return _notFound();
   }
 
@@ -115,18 +116,20 @@ class GoogleSheetsService {
     final ss = await _api.spreadsheets.get(spreadsheetId);
     for (final sh in ss.sheets ?? []) {
       final props = sh.properties;
-      if (props != null && props.title == title) {
-        return props.sheetId;
-      }
+      if (props != null && props.title == title) return props.sheetId;
     }
     return null;
   }
 
-  /// dd/MM/yyyy HH:mm:ss no fuso do dispositivo
-  String _formatTimestamp(DateTime dt) {
-    final d = dt.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}:${two(d.second)}';
+  /// Converte índice zero-based para letra(s) de coluna (0->A, 1->B, ..., 25->Z, 26->AA, ...)
+  String _colIndexToA1(int idx) {
+    int n = idx;
+    String s = '';
+    while (n >= 0) {
+      s = String.fromCharCode((n % 26) + 65) + s;
+      n = (n ~/ 26) - 1;
+    }
+    return s;
   }
 }
 
@@ -136,6 +139,5 @@ enum MarkStatus { marked, alreadyPresent, notFound }
 class MarkResult {
   final MarkStatus status;
   final int? row;
-  final String? timestamp;
-  MarkResult({required this.status, this.row, this.timestamp});
+  MarkResult({required this.status, this.row});
 }

@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.example.checkin_qr"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973" // Força o NDK requerido pelo mobile_scanner
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

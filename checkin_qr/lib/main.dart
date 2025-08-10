@@ -11,7 +11,7 @@ void main() => runApp(const CheckInApp());
 const Color kNavy = Color(0xFF0B1540);
 const Color kNavyDark = Color(0xFF081033);
 
-// URL do formulário (troque pelo link real)
+// URL do Google Sheets (seu link atual)
 const String kFormUrl = 'https://docs.google.com/spreadsheets/d/1htQOjCdE-Ij979bHXVLl4P5h6ExpeCxsjWDtA8pEhr4/edit?usp=sharing';
 
 class CheckInApp extends StatelessWidget {
@@ -39,26 +39,34 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   // 👉 ID da planilha
   final String spreadsheetId = '1htQOjCdE-Ij979bHXVLl4P5h6ExpeCxsjWDtA8pEhr4';
 
   late GoogleSheetsService _sheets;
   bool _ready = false;
 
-  late final AnimationController _pulse;
+  // animações
+  late final AnimationController _pulse; // botão scan
   late final Animation<double> _scale;
+  late final AnimationController _bgCtl; // gradiente fundo
+  late final Animation<double> _bgAnim;
 
   @override
   void initState() {
     super.initState();
     _initSheets();
+
+    _bgCtl = AnimationController(vsync: this, duration: const Duration(seconds: 8))..repeat(reverse: true);
+    _bgAnim = CurvedAnimation(parent: _bgCtl, curve: Curves.easeInOut);
+
     _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
     _scale = Tween(begin: 0.98, end: 1.02).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut));
   }
 
   @override
   void dispose() {
+    _bgCtl.dispose();
     _pulse.dispose();
     super.dispose();
   }
@@ -72,17 +80,15 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     }
   }
 
-  void _toast(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  void _toast(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   Future<void> _openForm() async {
     final uri = Uri.parse(kFormUrl);
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok) _toast('Não consegui abrir o formulário.');
+    if (!ok) _toast('Não consegui abrir o Google Sheets.');
   }
 
   // ===== Atividades por dia (colunas: B=1, C=2, D=3, E=4) =====
-  // Terça tem 1 evento; Quarta tem 3.
   Map<String, List<ActivityOpt>> get _activitiesByDay => {
         'Segunda': const [
           ActivityOpt('Palestra de Abertura', 1),
@@ -112,15 +118,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       context: context,
       showDragHandle: true,
       backgroundColor: const Color(0xFF0F1C50),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
         Widget tile(String label, IconData icon) => ListTile(
-              leading: CircleAvatar(
-                backgroundColor: Colors.white10,
-                child: Icon(icon, color: Colors.white),
-              ),
+              leading: CircleAvatar(backgroundColor: Colors.white10, child: Icon(icon, color: Colors.white)),
               title: Text(label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.pop(ctx, label),
@@ -133,7 +134,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               const Text('Selecione o dia', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
               const SizedBox(height: 8),
               tile('Segunda', Icons.calendar_today),
-              tile('Terca', Icons.calendar_view_day), // sem acento
+              tile('Terca', Icons.calendar_view_day),
               tile('Quarta', Icons.event_available),
               const SizedBox(height: 8),
             ],
@@ -150,16 +151,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       context: context,
       showDragHandle: true,
       backgroundColor: const Color(0xFF0F1C50),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 4),
-            Text('Selecione a atividade — $dia',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            Text('Selecione a atividade — $dia', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
             for (final a in opts)
               ListTile(
@@ -196,15 +194,24 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       body: SafeArea(
         child: Stack(
           children: [
-            // Fundo
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [kNavy, kNavyDark],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-              ),
+            // Fundo animado
+            AnimatedBuilder(
+              animation: _bgAnim,
+              builder: (_, __) {
+                final t = _bgAnim.value;
+                return DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Color.lerp(kNavy, kNavyDark, t)!,
+                        Color.lerp(kNavyDark, const Color(0xFF0A1336), t)!,
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                );
+              },
             ),
 
             // Título topo
@@ -214,8 +221,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               right: 16,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text(
+                children: [
+                  const Text(
                     'XVI SEB - Sistema de CheckIn',
                     style: TextStyle(
                       color: Colors.white,
@@ -224,11 +231,15 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                       letterSpacing: 0.3,
                     ),
                   ),
-                  SizedBox(height: 6),
-                  SizedBox(
-                    height: 2,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(color: Colors.white),
+                  const SizedBox(height: 6),
+                  Container(
+                    height: 3,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.white70, Colors.white, Colors.white70],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                      ),
                     ),
                   ),
                 ],
@@ -250,7 +261,21 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.06),
                           borderRadius: BorderRadius.circular(28),
-                          border: Border.all(color: Colors.white.withOpacity(0.12)),
+                          border: Border.all(color: Colors.white.withOpacity(0.10)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.35),
+                              blurRadius: 36,
+                              spreadRadius: -4,
+                              offset: const Offset(0, 18),
+                            ),
+                            BoxShadow(
+                              color: Colors.white.withOpacity(0.06),
+                              blurRadius: 24,
+                              spreadRadius: 2,
+                              offset: const Offset(-8, -8),
+                            ),
+                          ],
                         ),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -262,6 +287,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white),
                             ),
                             const SizedBox(height: 16),
+
                             // Botão Escanear
                             ScaleTransition(
                               scale: _scale,
@@ -269,29 +295,47 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.white,
                                   foregroundColor: kNavy,
-                                  elevation: 10,
+                                  elevation: 12,
                                   shadowColor: Colors.white24,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                                  padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 16),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
                                   textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                                ),
+                                ).merge(ButtonStyle(
+                                  overlayColor: WidgetStatePropertyAll(Colors.white.withOpacity(0.08)),
+                                  animationDuration: const Duration(milliseconds: 120),
+                                )),
                                 onPressed: _ready ? _selecionarDiaEEscanear : null,
-                                child: Text(_ready ? 'Escanear' : 'Conectando...'),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(Icons.qr_code_scanner, size: 22),
+                                    SizedBox(width: 10),
+                                    Text('Escanear'),
+                                  ],
+                                ),
                               ),
                             ),
-                            // Espaço e botão Formulário logo abaixo (posição marcada em vermelho)
+
+                            // Botão Google Sheets logo abaixo
                             const SizedBox(height: 20),
-                            ElevatedButton.icon(
-                              onPressed: _openForm,
-                              icon: const Icon(Icons.open_in_new),
-                              label: const Text('Formulário'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white,
-                                foregroundColor: kNavy,
-                                elevation: 6,
-                                shadowColor: Colors.white24,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            Semantics(
+                              label: 'Abrir Google Sheets',
+                              button: true,
+                              child: _LiftOnPress(
+                                onTap: _openForm,
+                                child: ElevatedButton.icon(
+                                  onPressed: _openForm,
+                                  icon: const Icon(Icons.open_in_new),
+                                  label: const Text('Abrir Google Sheets'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: kNavy,
+                                    elevation: 8,
+                                    shadowColor: Colors.white24,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                                  ),
+                                ),
                               ),
                             ),
                           ],
@@ -327,7 +371,35 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
           ],
         ),
       ),
-      // ❌ sem FAB — pra não sobrepor o logo
+      // sem FAB — botão de abrir Sheets fica logo abaixo de "Escanear"
+    );
+  }
+}
+
+// ===== Botão que “afunda” 2px ao pressionar =====
+class _LiftOnPress extends StatefulWidget {
+  const _LiftOnPress({required this.child, required this.onTap});
+  final Widget child;
+  final VoidCallback onTap;
+
+  @override
+  State<_LiftOnPress> createState() => _LiftOnPressState();
+}
+
+class _LiftOnPressState extends State<_LiftOnPress> {
+  bool _down = false;
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 90),
+        transform: Matrix4.translationValues(0, _down ? 2 : 0, 0),
+        child: widget.child,
+      ),
     );
   }
 }
@@ -353,9 +425,14 @@ class _LogoBox extends StatelessWidget {
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.all(4),
-        child: SizedBox(
-          height: height,
-          child: Image.asset(path, fit: BoxFit.contain),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))],
+          ),
+          child: SizedBox(
+            height: height,
+            child: Image.asset(path, fit: BoxFit.contain),
+          ),
         ),
       ),
     );
@@ -392,7 +469,7 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _borderCtl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
-    _borderAnim = Tween(begin: 0.4, end: 1.0).animate(CurvedAnimation(parent: _borderCtl, curve: Curves.easeInOut));
+    _borderAnim = CurvedAnimation(parent: _borderCtl, curve: Curves.easeInOut);
   }
 
   @override
@@ -414,29 +491,59 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
       );
 
       if (!mounted) return;
-      String msg = '';
+
+      // feedback visual + háptico por status
+      late final SnackBar bar;
       switch (result.status) {
         case MarkStatus.marked:
-          msg = '$code marcado como Presente em ${widget.sheetName} — ${widget.activityLabel} ✅';
+          HapticFeedback.mediumImpact();
+          bar = _snack(const Icon(Icons.check_circle, color: Colors.white), 'Presença marcada com sucesso!');
           break;
         case MarkStatus.alreadyPresent:
-          msg = '$code já estava marcado em ${widget.sheetName} — ${widget.activityLabel}.';
+          HapticFeedback.lightImpact();
+          bar = _snack(const Icon(Icons.info, color: Colors.white), 'Este código já estava marcado.');
           break;
         case MarkStatus.notFound:
-          msg = 'Não encontrei "$code" em ${widget.sheetName}.';
+          HapticFeedback.vibrate();
+          bar = _snack(const Icon(Icons.error, color: Colors.white), 'Código não encontrado nesta lista.');
           break;
       }
+      ScaffoldMessenger.of(context).showSnackBar(bar);
 
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
+      // pequena pausa para o operador ver a mensagem, depois fecha
+      await Future.delayed(const Duration(milliseconds: 900));
       await _controller.stop();
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
-      _busy = false; // permite tentar de novo
+      HapticFeedback.vibrate();
+      ScaffoldMessenger.of(context).showSnackBar(
+        _snack(const Icon(Icons.warning_amber, color: Colors.white), 'Erro: $e', color: Colors.orange.shade700),
+      );
+      // cooldown rápido
+      await Future.delayed(const Duration(milliseconds: 800));
+      _busy = false;
     }
+  }
+
+  SnackBar _snack(Widget icon, String text, {Color? color}) {
+    final bg = color ??
+        (text.contains('sucesso')
+            ? Colors.green.shade700
+            : text.contains('já estava')
+                ? Colors.blueGrey.shade700
+                : Colors.red.shade700);
+    return SnackBar(
+      content: Row(children: [
+        icon,
+        const SizedBox(width: 12),
+        Flexible(child: Text(text)),
+      ]),
+      backgroundColor: bg,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(milliseconds: 800),
+    );
   }
 
   @override
@@ -448,11 +555,11 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
         title: Text('Escanear — ${widget.sheetName}: ${widget.activityLabel}'),
         centerTitle: true,
         actions: [
-          IconButton(icon: const Icon(Icons.flash_on), onPressed: () => _controller.toggleTorch()),
-          IconButton(icon: const Icon(Icons.flip_camera_android), onPressed: () => _controller.switchCamera()),
+          IconButton(icon: const Icon(Icons.flash_on), tooltip: 'Lanterna', onPressed: () => _controller.toggleTorch()),
+          IconButton(icon: const Icon(Icons.flip_camera_android), tooltip: 'Trocar câmera', onPressed: () => _controller.switchCamera()),
           IconButton(
             icon: const Icon(Icons.open_in_new),
-            tooltip: 'Abrir formulário',
+            tooltip: 'Abrir Google Sheets',
             onPressed: () => launchUrl(Uri.parse(kFormUrl), mode: LaunchMode.externalApplication),
           ),
         ],
@@ -466,7 +573,7 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
               if (v != null) _handle(v);
             },
           ),
-          // Overlay com borda animada
+          // Moldura "neon"
           IgnorePointer(
             child: Center(
               child: AnimatedBuilder(
@@ -478,16 +585,23 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: Colors.white.withOpacity(_borderAnim.value),
-                        width: 3,
+                        color: Colors.white.withOpacity(0.5 + 0.5 * _borderAnim.value),
+                        width: 2.5,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.white.withOpacity(0.15),
-                          blurRadius: 24,
-                          spreadRadius: 1,
+                          color: Colors.white.withOpacity(0.10 + 0.10 * _borderAnim.value),
+                          blurRadius: 32,
+                          spreadRadius: 2,
                         ),
                       ],
+                      gradient: RadialGradient(
+                        colors: [
+                          Colors.white.withOpacity(0.06 * _borderAnim.value),
+                          Colors.transparent
+                        ],
+                        radius: 0.85,
+                      ),
                     ),
                   );
                 },

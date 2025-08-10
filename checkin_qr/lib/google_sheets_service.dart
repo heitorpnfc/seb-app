@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:googleapis/sheets/v4.dart' as sheets;
@@ -37,10 +38,12 @@ class GoogleSheetsService {
     required int presenceColIndex,
     String baseRange = 'A2:E20000',
   }) async {
-    final range = '$sheetName!$baseRange';
+    // ✅ coloca o nome da aba entre aspas simples: aceita acentos/espaços
+    final tab = "'$sheetName'";
+    final range = '$tab!$baseRange';
 
-    // 1) Ler A..E para localizar a linha
-    final res = await _api.spreadsheets.values.get(spreadsheetId, range);
+    // 1) Ler A..E para localizar a linha (com retry leve)
+    final res = await _retry(() => _api.spreadsheets.values.get(spreadsheetId, range));
     final values = res.values ?? [];
 
     for (int i = 0; i < values.length; i++) {
@@ -59,16 +62,16 @@ class GoogleSheetsService {
 
         // 3) Escrever "Presente" na coluna escolhida (somente a célula necessária)
         final presenceColA1 = _colIndexToA1(presenceColIndex); // B, C, D, E...
-        final presenceCellRange = '$sheetName!$presenceColA1$rowNumber';
+        final presenceCellRange = '$tab!$presenceColA1$rowNumber';
 
-        await _api.spreadsheets.values.update(
-          sheets.ValueRange(values: [
-            ['Presente']
-          ]),
-          spreadsheetId,
-          presenceCellRange,
-          valueInputOption: 'RAW',
-        );
+        await _retry(() => _api.spreadsheets.values.update(
+              sheets.ValueRange(values: [
+                ['Presente']
+              ]),
+              spreadsheetId,
+              presenceCellRange,
+              valueInputOption: 'RAW',
+            ));
 
         // 4) Formatar a célula da presença (central + verde claro + negrito)
         final sheetId = await _getSheetIdByTitle(sheetName);
@@ -99,10 +102,10 @@ class GoogleSheetsService {
             ),
           ];
 
-          await _api.spreadsheets.batchUpdate(
-            sheets.BatchUpdateSpreadsheetRequest(requests: requests),
-            spreadsheetId,
-          );
+          await _retry(() => _api.spreadsheets.batchUpdate(
+                sheets.BatchUpdateSpreadsheetRequest(requests: requests),
+                spreadsheetId,
+              ));
         }
 
         return _marked(row: rowNumber);
@@ -111,9 +114,24 @@ class GoogleSheetsService {
     return _notFound();
   }
 
+  /// Retry simples com 2 re-tentativas (3 tentativas no total).
+  Future<T> _retry<T>(Future<T> Function() fn) async {
+    const delays = [Duration(milliseconds: 0), Duration(milliseconds: 300), Duration(milliseconds: 700)];
+    Object? lastErr;
+    for (final d in delays) {
+      if (d.inMilliseconds > 0) await Future.delayed(d);
+      try {
+        return await fn();
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr ?? Exception('Erro desconhecido');
+  }
+
   /// Busca o sheetId (gid) a partir do título da aba.
   Future<int?> _getSheetIdByTitle(String title) async {
-    final ss = await _api.spreadsheets.get(spreadsheetId);
+    final ss = await _retry(() => _api.spreadsheets.get(spreadsheetId));
     for (final sh in ss.sheets ?? []) {
       final props = sh.properties;
       if (props != null && props.title == title) return props.sheetId;

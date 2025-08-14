@@ -11,16 +11,13 @@ void main() => runApp(const CheckInApp());
 const Color kNavy = Color(0xFF0B1540);
 const Color kNavyDark = Color(0xFF081033);
 
-// URL do Google Sheets (seu link atual)
-const String kFormUrl = 'https://docs.google.com/spreadsheets/d/1htQOjCdE-Ij979bHXVLl4P5h6ExpeCxsjWDtA8pEhr4/edit?usp=sharing';
-
 class CheckInApp extends StatelessWidget {
   const CheckInApp({super.key});
   @override
   Widget build(BuildContext context) {
     final scheme = ColorScheme.fromSeed(seedColor: kNavy, brightness: Brightness.dark);
     return MaterialApp(
-      title: 'XVI SEB - Sistema de CheckIn',
+      title: 'PET CheckIn',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: scheme,
@@ -33,6 +30,28 @@ class CheckInApp extends StatelessWidget {
   }
 }
 
+// ===== Modelo de atividade (rótulo + coluna) =====
+class ActivityOpt {
+  final String label;
+  final int colIndex; // zero-based (A=0,B=1,C=2,D=3,...)
+  const ActivityOpt(this.label, this.colIndex);
+}
+
+// ===== Config do único evento (SEB) =====
+class EventConfig {
+  final String name;
+  final String spreadsheetId;
+  final String formUrl;
+  final Map<String, List<ActivityOpt>> activitiesByDay;
+
+  const EventConfig({
+    required this.name,
+    required this.spreadsheetId,
+    required this.formUrl,
+    required this.activitiesByDay,
+  });
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
@@ -40,26 +59,47 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
-  // 👉 ID da planilha
-  final String spreadsheetId = '1htQOjCdE-Ij979bHXVLl4P5h6ExpeCxsjWDtA8pEhr4';
+  // ÚNICO EVENTO
+  final EventConfig _seb = const EventConfig(
+    name: 'XVI SEB',
+    spreadsheetId: '1htQOjCdE-Ij979bHXVLl4P5h6ExpeCxsjWDtA8pEhr4',
+    formUrl:
+        'https://docs.google.com/spreadsheets/d/1htQOjCdE-Ij979bHXVLl4P5h6ExpeCxsjWDtA8pEhr4/edit?gid=44183326',
+    activitiesByDay: {
+      // ATENÇÃO: índices são zero-based:
+      // B=1, C=2, D=3, E=4, F=5, G=6, H=7, I=8...
+      // O horário será gravado automaticamente na coluna à direita.
+      'Segunda': [
+        ActivityOpt('Palestra de Abertura', 1),   // B -> horário em C
+        ActivityOpt('Palestra de SEB Normal', 3), // D -> horário em E  (CORRIGIDO)
+        ActivityOpt('Workshop A/B', 5),           // F -> horário em G
+        ActivityOpt('Workshop C/D', 7),           // H -> horário em I
+      ],
+      'Terca': [
+        ActivityOpt('Palestra SEB - Específico', 1), // B -> horário em C
+      ],
+      'Quarta': [
+        ActivityOpt('Mesa Redonda', 1),              // B -> horário em C
+        ActivityOpt('Palestra SEB Normal 2', 3),     // D -> horário em E
+        ActivityOpt('Cerimônia de Encerramento', 5), // F -> horário em G
+      ],
+    },
+  );
 
-  late GoogleSheetsService _sheets;
+  GoogleSheetsService? _sheets;
   bool _ready = false;
 
-  // animações
-  late final AnimationController _pulse; // botão scan
+  // animações de UI
+  late final AnimationController _pulse;
   late final Animation<double> _scale;
-  late final AnimationController _bgCtl; // gradiente fundo
+  late final AnimationController _bgCtl;
   late final Animation<double> _bgAnim;
 
   @override
   void initState() {
     super.initState();
-    _initSheets();
-
     _bgCtl = AnimationController(vsync: this, duration: const Duration(seconds: 8))..repeat(reverse: true);
     _bgAnim = CurvedAnimation(parent: _bgCtl, curve: Curves.easeInOut);
-
     _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
     _scale = Tween(begin: 0.98, end: 1.02).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut));
   }
@@ -71,47 +111,31 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  Future<void> _initSheets() async {
+  Future<void> _ensureSheetsReady() async {
+    if (_ready && _sheets != null) return;
     try {
-      _sheets = await GoogleSheetsService.create(spreadsheetId);
-      setState(() => _ready = true);
+      final s = await GoogleSheetsService.create(_seb.spreadsheetId);
+      setState(() {
+        _sheets = s;
+        _ready = true;
+      });
     } catch (e) {
       _toast('Falha ao iniciar Google Sheets: $e');
     }
   }
 
-  void _toast(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  void _toast(String msg) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   Future<void> _openForm() async {
-    final uri = Uri.parse(kFormUrl);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final ok = await launchUrl(Uri.parse(_seb.formUrl), mode: LaunchMode.externalApplication);
     if (!ok) _toast('Não consegui abrir o Google Sheets.');
   }
 
-  // ===== Atividades por dia (colunas: B=1, C=2, D=3, E=4) =====
-  Map<String, List<ActivityOpt>> get _activitiesByDay => {
-        'Segunda': const [
-          ActivityOpt('Palestra de Abertura', 1),
-          ActivityOpt('Palestra de SEB Normal', 2),
-          ActivityOpt('Workshop A/B', 3),
-          ActivityOpt('Workshop C/D', 4),
-        ],
-        'Terca': const [
-          ActivityOpt('Palestra SEB - Específico', 1),
-        ],
-        'Quarta': const [
-          ActivityOpt('Mesa Redonda', 1),
-          ActivityOpt('Palestra SEB Normal 2', 2),
-          ActivityOpt('Cerimônia de Encerramento', 3),
-        ],
-      };
-
-  Future<void> _selecionarDiaEEscanear() async {
-    if (!_ready) {
-      _toast('Conectando ao Google Sheets...');
-      return;
-    }
-    HapticFeedback.lightImpact();
+  // Fluxo: (1) dia -> (2) atividade -> (3) scanner
+  Future<void> _escanear() async {
+    await _ensureSheetsReady();
+    if (!_ready || _sheets == null) return;
 
     // 1) Seleciona o dia
     final dia = await showModalBottomSheet<String>(
@@ -120,33 +144,31 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       backgroundColor: const Color(0xFF0F1C50),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
-        Widget tile(String label, IconData icon) => ListTile(
-              leading: CircleAvatar(backgroundColor: Colors.white10, child: Icon(icon, color: Colors.white)),
-              title: Text(label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.pop(ctx, label),
-            );
+        final dias = _seb.activitiesByDay.keys.toList();
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 4),
-              const Text('Selecione o dia', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+              const Text('Selecione o dia', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
               const SizedBox(height: 8),
-              tile('Segunda', Icons.calendar_today),
-              tile('Terca', Icons.calendar_view_day),
-              tile('Quarta', Icons.event_available),
+              for (final d in dias)
+                ListTile(
+                  leading: const Icon(Icons.date_range),
+                  title: Text(d),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.pop(ctx, d),
+                ),
               const SizedBox(height: 8),
             ],
           ),
         );
       },
     );
-
     if (!mounted || dia == null) return;
 
     // 2) Seleciona a atividade do dia
-    final opts = _activitiesByDay[dia] ?? [];
+    final opts = _seb.activitiesByDay[dia] ?? const <ActivityOpt>[];
     final atividade = await showModalBottomSheet<ActivityOpt>(
       context: context,
       showDragHandle: true,
@@ -157,7 +179,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 4),
-            Text('Selecione a atividade — $dia', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            Text('Selecione a atividade — $dia',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
             for (final a in opts)
               ListTile(
@@ -171,16 +194,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
       ),
     );
-
     if (!mounted || atividade == null) return;
 
-    // 3) Vai para o scanner
+    // 3) Scanner
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ScannerPage(
-        sheets: _sheets,
+        sheets: _sheets!,
         sheetName: dia,
         presenceColIndex: atividade.colIndex,
-        activityLabel: atividade.label,
+        activityLabel: '${_seb.name} — ${atividade.label}',
+        formUrl: _seb.formUrl,
       ),
     ));
   }
@@ -188,7 +211,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
-    final logoH = w * 0.24; // mesma altura para as duas logos
+    final logoH = w * 0.24;
 
     return Scaffold(
       body: SafeArea(
@@ -214,39 +237,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               },
             ),
 
-            // Título topo
-            Positioned(
-              top: 28,
-              left: 16,
-              right: 16,
+            // Título
+            const Positioned(
+              top: 28, left: 16, right: 16,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'XVI SEB - Sistema de CheckIn',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    height: 3,
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.white70, Colors.white, Colors.white70],
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                      ),
-                    ),
-                  ),
+                  Text('PET CheckIn',
+                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                  SizedBox(height: 6),
+                  _HeaderRule(),
                 ],
               ),
             ),
 
-            // Card central + botões
+            // Card central
             Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
@@ -269,12 +274,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               spreadRadius: -4,
                               offset: const Offset(0, 18),
                             ),
-                            BoxShadow(
-                              color: Colors.white.withOpacity(0.06),
-                              blurRadius: 24,
-                              spreadRadius: 2,
-                              offset: const Offset(-8, -8),
-                            ),
                           ],
                         ),
                         child: Column(
@@ -282,16 +281,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           children: [
                             const Icon(Icons.qr_code_scanner, size: 64, color: Colors.white),
                             const SizedBox(height: 12),
-                            const Text(
-                              'Registrar presença',
-                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white),
-                            ),
+                            const Text('Registrar presença',
+                                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
                             const SizedBox(height: 16),
 
-                            // Botão Escanear
+                            // Botão principal: ESCANEAR
                             ScaleTransition(
                               scale: _scale,
-                              child: ElevatedButton(
+                              child: ElevatedButton.icon(
+                                icon: const Icon(Icons.qr_code_2),
+                                label: const Text('Escanear'),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.white,
                                   foregroundColor: kNavy,
@@ -300,42 +299,25 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                                   padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
                                   textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                                ).merge(ButtonStyle(
-                                  overlayColor: WidgetStatePropertyAll(Colors.white.withOpacity(0.08)),
-                                  animationDuration: const Duration(milliseconds: 120),
-                                )),
-                                onPressed: _ready ? _selecionarDiaEEscanear : null,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: const [
-                                    Icon(Icons.qr_code_scanner, size: 22),
-                                    SizedBox(width: 10),
-                                    Text('Escanear'),
-                                  ],
                                 ),
+                                onPressed: _escanear,
                               ),
                             ),
 
-                            // Botão Google Sheets logo abaixo
                             const SizedBox(height: 20),
-                            Semantics(
-                              label: 'Abrir Google Sheets',
-                              button: true,
-                              child: _LiftOnPress(
-                                onTap: _openForm,
-                                child: ElevatedButton.icon(
-                                  onPressed: _openForm,
-                                  icon: const Icon(Icons.open_in_new),
-                                  label: const Text('Abrir Google Sheets'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: kNavy,
-                                    elevation: 8,
-                                    shadowColor: Colors.white24,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-                                  ),
-                                ),
+
+                            // Abre Sheets
+                            ElevatedButton.icon(
+                              onPressed: _openForm,
+                              icon: const Icon(Icons.open_in_new),
+                              label: const Text('Abrir Google Sheets'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: kNavy,
+                                elevation: 8,
+                                shadowColor: Colors.white24,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
                               ),
                             ),
                           ],
@@ -347,93 +329,56 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ),
 
-            // Logos no rodapé
+            // Logos (rodapé)
             Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
+              left: 12, right: 12, bottom: 12,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  _LogoBox(
-                    path: 'assets/LogoPET.png',
-                    height: logoH,
-                    onTap: () => _toast('PET Engenharia Biomédica'),
-                  ),
-                  _LogoBox(
-                    path: 'assets/LogoXVISEB.png',
-                    height: logoH,
-                    onTap: () => _toast('XVI SEB'),
-                  ),
+                  _LogoBox(path: 'assets/LogoPET.png', height: logoH),
+                  _LogoBox(path: 'assets/LogoXVISEB.png', height: logoH),
                 ],
               ),
             ),
           ],
         ),
       ),
-      // sem FAB — botão de abrir Sheets fica logo abaixo de "Escanear"
     );
   }
 }
 
-// ===== Botão que “afunda” 2px ao pressionar =====
-class _LiftOnPress extends StatefulWidget {
-  const _LiftOnPress({required this.child, required this.onTap});
-  final Widget child;
-  final VoidCallback onTap;
-
-  @override
-  State<_LiftOnPress> createState() => _LiftOnPressState();
-}
-
-class _LiftOnPressState extends State<_LiftOnPress> {
-  bool _down = false;
+class _HeaderRule extends StatelessWidget {
+  const _HeaderRule();
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _down = true),
-      onTapCancel: () => setState(() => _down = false),
-      onTapUp: (_) => setState(() => _down = false),
-      onTap: widget.onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 90),
-        transform: Matrix4.translationValues(0, _down ? 2 : 0, 0),
-        child: widget.child,
+    return Container(
+      height: 3,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.white70, Colors.white, Colors.white70],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
       ),
     );
   }
 }
 
-// ===== Modelo da atividade (rótulo + coluna) =====
-class ActivityOpt {
-  final String label;
-  final int colIndex; // B=1, C=2, D=3, E=4
-  const ActivityOpt(this.label, this.colIndex);
-}
-
 // ===== Logos =====
 class _LogoBox extends StatelessWidget {
-  const _LogoBox({required this.path, required this.height, this.onTap});
+  const _LogoBox({required this.path, required this.height});
   final String path;
   final double height;
-  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))],
-          ),
-          child: SizedBox(
-            height: height,
-            child: Image.asset(path, fit: BoxFit.contain),
-          ),
+    return Padding(
+      padding: const EdgeInsets.all(4),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))],
         ),
+        child: SizedBox(height: height, child: Image.asset(path, fit: BoxFit.contain)),
       ),
     );
   }
@@ -446,12 +391,14 @@ class ScannerPage extends StatefulWidget {
     required this.sheetName,
     required this.presenceColIndex,
     required this.activityLabel,
+    required this.formUrl,
   });
 
   final GoogleSheetsService sheets;
   final String sheetName;        // 'Segunda' | 'Terca' | 'Quarta'
-  final int presenceColIndex;    // B=1, C=2, D=3, E=4
-  final String activityLabel;
+  final int presenceColIndex;    // B=1, D=3, F=5, H=7...
+  final String activityLabel;    // exibe no AppBar
+  final String formUrl;
 
   @override
   State<ScannerPage> createState() => _ScannerPageState();
@@ -479,6 +426,21 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
     super.dispose();
   }
 
+  SnackBar _snack(IconData icon, String text, Color color) {
+    return SnackBar(
+      backgroundColor: color,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(milliseconds: 900),
+      content: Row(
+        children: [
+          Icon(icon, color: Colors.white),
+          const SizedBox(width: 12),
+          Flexible(child: Text(text)),
+        ],
+      ),
+    );
+  }
+
   Future<void> _handle(String code) async {
     if (_busy || code.isEmpty || code == _last) return;
     _busy = true;
@@ -491,26 +453,33 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
       );
 
       if (!mounted) return;
-
-      // feedback visual + háptico por status
-      late final SnackBar bar;
       switch (result.status) {
         case MarkStatus.marked:
           HapticFeedback.mediumImpact();
-          bar = _snack(const Icon(Icons.check_circle, color: Colors.white), 'Presença marcada com sucesso!');
+          final ts = result.timestamp;
+          ScaffoldMessenger.of(context).showSnackBar(
+            _snack(
+              Icons.check_circle,
+              ts != null
+                  ? 'Presença marcada às $ts (${widget.activityLabel})'
+                  : 'Presença marcada! (${widget.activityLabel})',
+              Colors.green.shade700,
+            ),
+          );
           break;
         case MarkStatus.alreadyPresent:
           HapticFeedback.lightImpact();
-          bar = _snack(const Icon(Icons.info, color: Colors.white), 'Este código já estava marcado.');
+          ScaffoldMessenger.of(context).showSnackBar(
+            _snack(Icons.info, 'Já estava marcado.', Colors.blueGrey.shade700),
+          );
           break;
         case MarkStatus.notFound:
           HapticFeedback.vibrate();
-          bar = _snack(const Icon(Icons.error, color: Colors.white), 'Código não encontrado nesta lista.');
+          ScaffoldMessenger.of(context).showSnackBar(
+            _snack(Icons.error, 'Código não encontrado nesta lista.', Colors.red.shade700),
+          );
           break;
       }
-      ScaffoldMessenger.of(context).showSnackBar(bar);
-
-      // pequena pausa para o operador ver a mensagem, depois fecha
       await Future.delayed(const Duration(milliseconds: 900));
       await _controller.stop();
       if (!mounted) return;
@@ -519,31 +488,11 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
       if (!mounted) return;
       HapticFeedback.vibrate();
       ScaffoldMessenger.of(context).showSnackBar(
-        _snack(const Icon(Icons.warning_amber, color: Colors.white), 'Erro: $e', color: Colors.orange.shade700),
+        _snack(Icons.warning_amber, 'Erro: $e', Colors.orange.shade700),
       );
-      // cooldown rápido
       await Future.delayed(const Duration(milliseconds: 800));
       _busy = false;
     }
-  }
-
-  SnackBar _snack(Widget icon, String text, {Color? color}) {
-    final bg = color ??
-        (text.contains('sucesso')
-            ? Colors.green.shade700
-            : text.contains('já estava')
-                ? Colors.blueGrey.shade700
-                : Colors.red.shade700);
-    return SnackBar(
-      content: Row(children: [
-        icon,
-        const SizedBox(width: 12),
-        Flexible(child: Text(text)),
-      ]),
-      backgroundColor: bg,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(milliseconds: 800),
-    );
   }
 
   @override
@@ -552,7 +501,7 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: kNavy,
-        title: Text('Escanear — ${widget.sheetName}: ${widget.activityLabel}'),
+        title: Text('Escanear — ${widget.sheetName}'),
         centerTitle: true,
         actions: [
           IconButton(icon: const Icon(Icons.flash_on), tooltip: 'Lanterna', onPressed: () => _controller.toggleTorch()),
@@ -560,7 +509,7 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
           IconButton(
             icon: const Icon(Icons.open_in_new),
             tooltip: 'Abrir Google Sheets',
-            onPressed: () => launchUrl(Uri.parse(kFormUrl), mode: LaunchMode.externalApplication),
+            onPressed: () => launchUrl(Uri.parse(widget.formUrl), mode: LaunchMode.externalApplication),
           ),
         ],
       ),
@@ -573,12 +522,12 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
               if (v != null) _handle(v);
             },
           ),
-          // Moldura "neon"
+          // Moldura “neon”
           IgnorePointer(
             child: Center(
               child: AnimatedBuilder(
                 animation: _borderAnim,
-                builder: (context, _) {
+                builder: (_, __) {
                   return Container(
                     width: 280,
                     height: 280,
@@ -596,10 +545,7 @@ class _ScannerPageState extends State<ScannerPage> with SingleTickerProviderStat
                         ),
                       ],
                       gradient: RadialGradient(
-                        colors: [
-                          Colors.white.withOpacity(0.06 * _borderAnim.value),
-                          Colors.transparent
-                        ],
+                        colors: [Colors.white.withOpacity(0.06 * _borderAnim.value), Colors.transparent],
                         radius: 0.85,
                       ),
                     ),

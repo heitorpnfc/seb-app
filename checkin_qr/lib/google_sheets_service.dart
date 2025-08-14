@@ -25,24 +25,20 @@ class GoogleSheetsService {
   MarkResult _notFound() => MarkResult(status: MarkStatus.notFound);
   MarkResult _already({int? row}) =>
       MarkResult(status: MarkStatus.alreadyPresent, row: row);
-  MarkResult _marked({required int row}) =>
-      MarkResult(status: MarkStatus.marked, row: row);
+  MarkResult _marked({required int row, required String ts}) =>
+      MarkResult(status: MarkStatus.marked, row: row, timestamp: ts);
 
-  /// Marca presença em UMA coluna de presença (ex.: B..E).
-  ///
-  /// [sheetName]        -> nome da aba (ex.: 'Segunda', 'Terca', 'Quarta')
-  /// [presenceColIndex] -> índice zero-based da coluna de presença (B=1, C=2, D=3, E=4)
+  /// Marca na coluna informada (B=1, D=3, F=5, H=7...) e grava o HORÁRIO na coluna ao lado (C,E,G,I...).
   Future<MarkResult> marcarPresencaEmColuna(
     String valor, {
     required String sheetName,
     required int presenceColIndex,
-    String baseRange = 'A2:E20000',
+    String baseRange = 'A2:Z20000',
   }) async {
-    // ✅ coloca o nome da aba entre aspas simples: aceita acentos/espaços
     final tab = "'$sheetName'";
     final range = '$tab!$baseRange';
 
-    // 1) Ler A..E para localizar a linha (com retry leve)
+    // 1) Localiza o nome na coluna A
     final res = await _retry(() => _api.spreadsheets.values.get(spreadsheetId, range));
     final values = res.values ?? [];
 
@@ -55,15 +51,14 @@ class GoogleSheetsService {
       if (colA.trim().toLowerCase() == valor.trim().toLowerCase()) {
         final rowNumber = i + 2; // começa em A2
 
-        // 2) Bloqueio de duplicata para a coluna selecionada
+        // 2) evita duplicar
         if (currentPresence.trim().toLowerCase() == 'presente') {
           return _already(row: rowNumber);
         }
 
-        // 3) Escrever "Presente" na coluna escolhida (somente a célula necessária)
-        final presenceColA1 = _colIndexToA1(presenceColIndex); // B, C, D, E...
+        // 3) escreve "Presente"
+        final presenceColA1 = _colIndexToA1(presenceColIndex);
         final presenceCellRange = '$tab!$presenceColA1$rowNumber';
-
         await _retry(() => _api.spreadsheets.values.update(
               sheets.ValueRange(values: [
                 ['Presente']
@@ -73,7 +68,26 @@ class GoogleSheetsService {
               valueInputOption: 'RAW',
             ));
 
-        // 4) Formatar a célula da presença (central + verde claro + negrito)
+        // 4) escreve o HORÁRIO na coluna ao lado
+        final timeColIndex = presenceColIndex + 1;
+        final timeColA1 = _colIndexToA1(timeColIndex);
+        final timeCellRange = '$tab!$timeColA1$rowNumber';
+
+        String _p2(int n) => n.toString().padLeft(2, '0');
+        final now = DateTime.now();
+        final timeStr =
+            '${now.year}-${_p2(now.month)}-${_p2(now.day)} ${_p2(now.hour)}:${_p2(now.minute)}:${_p2(now.second)}';
+
+        await _retry(() => _api.spreadsheets.values.update(
+              sheets.ValueRange(values: [
+                [timeStr]
+              ]),
+              spreadsheetId,
+              timeCellRange,
+              valueInputOption: 'USER_ENTERED', // Sheets interpreta como data/hora
+            ));
+
+        // 5) formatação visual
         final sheetId = await _getSheetIdByTitle(sheetName);
         if (sheetId != null) {
           final requests = <sheets.Request>[
@@ -100,6 +114,27 @@ class GoogleSheetsService {
                     'userEnteredFormat(horizontalAlignment,verticalAlignment,backgroundColor,textFormat)',
               ),
             ),
+            sheets.Request(
+              repeatCell: sheets.RepeatCellRequest(
+                range: sheets.GridRange(
+                  sheetId: sheetId,
+                  startRowIndex: rowNumber - 1,
+                  endRowIndex: rowNumber,
+                  startColumnIndex: timeColIndex,
+                  endColumnIndex: timeColIndex + 1,
+                ),
+                cell: sheets.CellData(
+                  userEnteredFormat: sheets.CellFormat(
+                    horizontalAlignment: 'CENTER',
+                    numberFormat: sheets.NumberFormat(
+                      type: 'DATE_TIME',
+                      pattern: 'dd/MM/yyyy HH:mm:ss',
+                    ),
+                  ),
+                ),
+                fields: 'userEnteredFormat(horizontalAlignment,numberFormat)',
+              ),
+            ),
           ];
 
           await _retry(() => _api.spreadsheets.batchUpdate(
@@ -108,13 +143,12 @@ class GoogleSheetsService {
               ));
         }
 
-        return _marked(row: rowNumber);
+        return _marked(row: rowNumber, ts: timeStr);
       }
     }
     return _notFound();
   }
 
-  /// Retry simples com 2 re-tentativas (3 tentativas no total).
   Future<T> _retry<T>(Future<T> Function() fn) async {
     const delays = [Duration(milliseconds: 0), Duration(milliseconds: 300), Duration(milliseconds: 700)];
     Object? lastErr;
@@ -129,7 +163,6 @@ class GoogleSheetsService {
     throw lastErr ?? Exception('Erro desconhecido');
   }
 
-  /// Busca o sheetId (gid) a partir do título da aba.
   Future<int?> _getSheetIdByTitle(String title) async {
     final ss = await _retry(() => _api.spreadsheets.get(spreadsheetId));
     for (final sh in ss.sheets ?? []) {
@@ -139,7 +172,6 @@ class GoogleSheetsService {
     return null;
   }
 
-  /// Converte índice zero-based para letra(s) de coluna (0->A, 1->B, ..., 25->Z, 26->AA, ...)
   String _colIndexToA1(int idx) {
     int n = idx;
     String s = '';
@@ -157,5 +189,6 @@ enum MarkStatus { marked, alreadyPresent, notFound }
 class MarkResult {
   final MarkStatus status;
   final int? row;
-  MarkResult({required this.status, this.row});
+  final String? timestamp; // horário gravado (texto)
+  MarkResult({required this.status, this.row, this.timestamp});
 }
